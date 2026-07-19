@@ -32,11 +32,29 @@ jobs:
           gradle-version: "9.5.0"
 
       - name: Build debug APK
-        run: gradle :app:assembleDebug --stacktrace
+        id: build
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle :app:assembleDebug --stacktrace 2>&1 | tee build.log
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-build-log
+          path: build.log
+          if-no-files-found: error
 
       - name: Upload debug APK
+        if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: ruido-branco-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+      - name: Fail when compilation fails
+        if: steps.build.outcome != 'success'
+        run: exit 1
