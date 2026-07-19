@@ -11,20 +11,21 @@
         android:gravity="center"
         android:orientation="vertical"
         android:paddingStart="32dp"
-        android:paddingTop="48dp"
+        android:paddingTop="34dp"
         android:paddingEnd="32dp"
-        android:paddingBottom="48dp">
+        android:paddingBottom="42dp">
+
+        <ImageView
+            android:layout_width="118dp"
+            android:layout_height="118dp"
+            android:adjustViewBounds="true"
+            android:contentDescription="@string/logo_description"
+            android:src="@drawable/ic_sleepy_moon" />
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="@string/moon_symbol"
-            android:textSize="52sp" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
+            android:layout_marginTop="8dp"
             android:gravity="center"
             android:text="@string/app_name"
             android:textColor="@color/text_primary"
@@ -44,7 +45,7 @@
             android:id="@+id/statusText"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="38dp"
+            android:layout_marginTop="32dp"
             android:text="@string/status_stopped"
             android:textColor="@color/text_muted"
             android:textSize="18sp"
@@ -67,7 +68,7 @@
             android:id="@+id/volumeText"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="38dp"
+            android:layout_marginTop="34dp"
             android:text="@string/volume_default"
             android:textColor="@color/text_primary"
             android:textSize="20sp"
@@ -108,9 +109,66 @@
         </LinearLayout>
 
         <TextView
+            android:id="@+id/toneText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="32dp"
+            android:gravity="center"
+            android:text="@string/tone_default"
+            android:textColor="@color/text_primary"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <SeekBar
+            android:id="@+id/toneSeekBar"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="8dp"
+            android:contentDescription="@string/tone_control"
+            android:max="200"
+            android:progress="65"
+            android:progressBackgroundTint="@color/secondary_button"
+            android:progressTint="@color/primary"
+            android:splitTrack="false"
+            android:thumbTint="@color/primary" />
+
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="42dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/tone_lower_label"
+                android:textColor="@color/text_muted"
+                android:textSize="13sp" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="@string/tone_center_label"
+                android:textColor="@color/text_muted"
+                android:textSize="13sp" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="end"
+                android:text="@string/tone_upper_label"
+                android:textColor="@color/text_muted"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="38dp"
             android:gravity="center"
             android:lineSpacingExtra="3dp"
             android:text="@string/offline_message"
