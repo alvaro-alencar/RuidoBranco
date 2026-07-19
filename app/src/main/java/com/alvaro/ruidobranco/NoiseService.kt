@@ -31,6 +31,9 @@ class NoiseService : Service() {
     private var currentVolume = DEFAULT_VOLUME
 
     @Volatile
+    private var currentTone = DEFAULT_TONE
+
+    @Volatile
     private var audioTrack: AudioTrack? = null
 
     private var audioThread: Thread? = null
@@ -48,9 +51,14 @@ class NoiseService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
         val storedVolume = preferences.getFloat(KEY_VOLUME, DEFAULT_VOLUME)
+        val storedTone = preferences.getFloat(KEY_TONE, DEFAULT_TONE)
+
         currentVolume = intent?.getFloatExtra(EXTRA_VOLUME, storedVolume)
             ?.coerceIn(MIN_VOLUME, MAX_VOLUME)
             ?: storedVolume.coerceIn(MIN_VOLUME, MAX_VOLUME)
+        currentTone = intent?.getFloatExtra(EXTRA_TONE, storedTone)
+            ?.coerceIn(MIN_TONE, MAX_TONE)
+            ?: storedTone.coerceIn(MIN_TONE, MAX_TONE)
 
         return when (action) {
             ACTION_STOP -> {
@@ -68,6 +76,15 @@ class NoiseService : Service() {
                 }
             }
 
+            ACTION_SET_TONE -> {
+                preferences.edit().putFloat(KEY_TONE, currentTone).apply()
+                updateNotification()
+                if (running.get()) START_STICKY else {
+                    stopSelf()
+                    START_NOT_STICKY
+                }
+            }
+
             ACTION_PLAY, null -> {
                 val shouldResume = action == ACTION_PLAY || preferences.getBoolean(KEY_PLAYING, false)
                 if (!shouldResume) {
@@ -77,6 +94,7 @@ class NoiseService : Service() {
                     preferences.edit()
                         .putBoolean(KEY_PLAYING, true)
                         .putFloat(KEY_VOLUME, currentVolume)
+                        .putFloat(KEY_TONE, currentTone)
                         .apply()
                     startForeground(NOTIFICATION_ID, buildNotification())
                     startNoiseIfNeeded()
@@ -154,13 +172,13 @@ class NoiseService : Service() {
             audioTrack = track
             track.setVolume(currentVolume)
 
-            generator.fill(buffer)
+            generator.fill(buffer, currentTone)
             val primed = track.write(buffer, 0, buffer.size, AudioTrack.WRITE_BLOCKING)
             check(primed >= 0) { "Falha ao preparar o buffer de áudio: $primed" }
             track.play()
 
             while (running.get()) {
-                generator.fill(buffer)
+                generator.fill(buffer, currentTone)
                 val written = track.write(buffer, 0, buffer.size, AudioTrack.WRITE_BLOCKING)
                 if (written < 0) {
                     error("Falha ao escrever áudio: $written")
@@ -245,10 +263,11 @@ class NoiseService : Service() {
         )
 
         val percentage = (currentVolume * 100).roundToInt()
+        val toneLabel = getString(toneDescriptionResource(currentTone))
         return Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_noise)
             .setContentTitle(getString(R.string.notification_title))
-            .setContentText(getString(R.string.notification_text, percentage))
+            .setContentText(getString(R.string.notification_text, percentage, toneLabel))
             .setContentIntent(openAppPendingIntent)
             .setCategory(Notification.CATEGORY_SERVICE)
             .setVisibility(Notification.VISIBILITY_PUBLIC)
@@ -262,6 +281,14 @@ class NoiseService : Service() {
             .build()
     }
 
+    private fun toneDescriptionResource(value: Float): Int = when {
+        value <= -0.65f -> R.string.tone_very_deep
+        value < -0.18f -> R.string.tone_deep
+        value >= 0.65f -> R.string.tone_very_bright
+        value > 0.18f -> R.string.tone_bright
+        else -> R.string.tone_neutral
+    }
+
     private fun updateNotification() {
         if (!running.get()) return
         getSystemService(NotificationManager::class.java)
@@ -272,11 +299,14 @@ class NoiseService : Service() {
         const val ACTION_PLAY = "com.alvaro.ruidobranco.PLAY"
         const val ACTION_STOP = "com.alvaro.ruidobranco.STOP"
         const val ACTION_SET_VOLUME = "com.alvaro.ruidobranco.SET_VOLUME"
+        const val ACTION_SET_TONE = "com.alvaro.ruidobranco.SET_TONE"
         const val EXTRA_VOLUME = "volume"
+        const val EXTRA_TONE = "tone"
 
         const val PREFERENCES_NAME = "noise_preferences"
         const val KEY_PLAYING = "playing"
         const val KEY_VOLUME = "volume"
+        const val KEY_TONE = "tone"
 
         private const val TAG = "NoiseService"
         private const val CHANNEL_ID = "continuous_noise"
@@ -284,5 +314,8 @@ class NoiseService : Service() {
         private const val DEFAULT_VOLUME = 0.35f
         private const val MIN_VOLUME = 0.05f
         private const val MAX_VOLUME = 1.00f
+        private const val DEFAULT_TONE = -0.35f
+        private const val MIN_TONE = -1.00f
+        private const val MAX_TONE = 1.00f
     }
 }
