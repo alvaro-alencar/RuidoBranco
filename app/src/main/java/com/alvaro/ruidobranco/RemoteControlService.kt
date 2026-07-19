@@ -13,12 +13,14 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
+import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.nearby.Nearby
 import com.google.android.gms.nearby.connection.AdvertisingOptions
 import com.google.android.gms.nearby.connection.ConnectionInfo
 import com.google.android.gms.nearby.connection.ConnectionLifecycleCallback
 import com.google.android.gms.nearby.connection.ConnectionResolution
 import com.google.android.gms.nearby.connection.ConnectionsClient
+import com.google.android.gms.nearby.connection.ConnectionsStatusCodes
 import com.google.android.gms.nearby.connection.DiscoveredEndpointInfo
 import com.google.android.gms.nearby.connection.DiscoveryOptions
 import com.google.android.gms.nearby.connection.EndpointDiscoveryCallback
@@ -29,7 +31,6 @@ import com.google.android.gms.nearby.connection.Strategy
 import org.json.JSONObject
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArraySet
-import kotlin.math.roundToInt
 
 /**
  * Mantém uma conexão direta e criptografada entre dois celulares com o mesmo app.
@@ -65,10 +66,20 @@ class RemoteControlService : Service() {
 
     private data class PeerInfo(val role: Role, val id: String, val name: String)
 
+    private enum class TransportState {
+        IDLE,
+        STARTING,
+        ADVERTISING,
+        DISCOVERING,
+        CONNECTING,
+        CONNECTED
+    }
+
     private val binder = LocalBinder()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val listeners = CopyOnWriteArraySet<Listener>()
     private val pendingPeers = mutableMapOf<String, PeerInfo>()
+    private val manuallyApprovedEndpoints = mutableSetOf<String>()
 
     private lateinit var connectionsClient: ConnectionsClient
 
@@ -77,6 +88,8 @@ class RemoteControlService : Service() {
     }
 
     private var role: Role = Role.PLAYER
+    private var transportState = TransportState.IDLE
+    private var transportGeneration = 0
     private var connectedEndpoint: String? = null
     private var connectedPeer: PeerInfo? = null
     private var requestedEndpoint: String? = null
@@ -85,6 +98,16 @@ class RemoteControlService : Service() {
     private var currentStatus = "Preparando conexão local…"
 
     private val reconnectRunnable = Runnable { restartTransport() }
+    private val discoveryWatchdog = Runnable {
+        if (
+            role == Role.CONTROLLER &&
+            transportState == TransportState.DISCOVERING &&
+            connectedEndpoint == null
+        ) {
+            currentStatus = "Busca ativa. Nenhum reprodutor encontrado ainda."
+            notifyStatus()
+        }
+    }
 
     private val payloadCallback = object : PayloadCallback() {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
@@ -105,10 +128,13 @@ class RemoteControlService : Service() {
             val peer = parseEndpointName(info.endpointName)
                 ?: PeerInfo(oppositeRole(), info.endpointName, info.endpointName)
             pendingPeers[endpointId] = peer
+            transportState = TransportState.CONNECTING
 
             val trustedId = preferences.getString(KEY_TRUSTED_PEER_ID, null)
             val token = preferences.getString(KEY_PAIR_TOKEN, null)
             if (!trustedId.isNullOrBlank() && !token.isNullOrBlank() && peer.id == trustedId) {
+                currentStatus = "Aparelho conhecido encontrado. Reconectando…"
+                notifyStatus()
                 acceptEndpoint(endpointId)
                 return
             }
@@ -126,7 +152,10 @@ class RemoteControlService : Service() {
             requestedEndpoint = null
             if (!result.status.isSuccess) {
                 pendingPeers.remove(endpointId)
-                currentStatus = "Não foi possível conectar. Tentando novamente…"
+                manuallyApprovedEndpoints.remove(endpointId)
+                transportState = TransportState.IDLE
+                val code = ConnectionsStatusCodes.getStatusCodeString(result.status.statusCode)
+                currentStatus = "Conexão recusada: $code (${result.status.statusCode}). Tentando novamente…"
                 notifyStatus()
                 scheduleReconnect()
                 return
@@ -135,6 +164,8 @@ class RemoteControlService : Service() {
             connectedEndpoint = endpointId
             connectedPeer = pendingPeers[endpointId]
             authenticated = false
+            transportState = TransportState.CONNECTED
+            mainHandler.removeCallbacks(discoveryWatchdog)
             connectionsClient.stopAdvertising()
             connectionsClient.stopDiscovery()
 
@@ -158,6 +189,8 @@ class RemoteControlService : Service() {
             connectedPeer = null
             authenticated = false
             pendingPairToken = null
+            manuallyApprovedEndpoints.remove(endpointId)
+            transportState = TransportState.IDLE
             currentStatus = "Conexão perdida. Procurando o outro celular…"
             notifyStatus()
             scheduleReconnect()
@@ -171,11 +204,12 @@ class RemoteControlService : Service() {
             val peer = parseEndpointName(info.endpointName) ?: return
             if (peer.role != Role.PLAYER) return
 
-            val trustedId = preferences.getString(KEY_TRUSTED_PEER_ID, null)
-            if (!trustedId.isNullOrBlank() && peer.id != trustedId) return
-
+            // Não descarte silenciosamente um aparelho quando houver um pareamento antigo.
+            // A confirmação visual do código é a autorização para substituir a identidade salva.
             pendingPeers[endpointId] = peer
             requestedEndpoint = endpointId
+            transportState = TransportState.CONNECTING
+            mainHandler.removeCallbacks(discoveryWatchdog)
             currentStatus = "Encontrado: ${peer.name}. Solicitando conexão…"
             notifyStatus()
 
@@ -184,15 +218,18 @@ class RemoteControlService : Service() {
                 .addOnFailureListener { error ->
                     Log.e(TAG, "Falha ao solicitar conexão", error)
                     requestedEndpoint = null
-                    currentStatus = "Falha ao conectar. Continuando a busca…"
+                    transportState = TransportState.IDLE
+                    currentStatus = formatFailure("Falha ao solicitar conexão", error)
                     notifyStatus()
+                    scheduleReconnect()
                 }
         }
 
         override fun onEndpointLost(endpointId: String) {
             if (requestedEndpoint == endpointId && connectedEndpoint == null) {
                 requestedEndpoint = null
-                currentStatus = "Reprodutor saiu do alcance. Procurando…"
+                transportState = TransportState.DISCOVERING
+                currentStatus = "Reprodutor saiu do alcance. Continuando a busca…"
                 notifyStatus()
             }
             pendingPeers.remove(endpointId)
@@ -218,10 +255,12 @@ class RemoteControlService : Service() {
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onDestroy() {
+        transportGeneration++
         mainHandler.removeCallbacks(reconnectRunnable)
-        connectionsClient.stopAllEndpoints()
+        mainHandler.removeCallbacks(discoveryWatchdog)
         connectionsClient.stopAdvertising()
         connectionsClient.stopDiscovery()
+        connectionsClient.stopAllEndpoints()
         super.onDestroy()
     }
 
@@ -245,7 +284,12 @@ class RemoteControlService : Service() {
         val changed = role != newRole
         role = newRole
         preferences.edit().putString(KEY_REMOTE_ROLE, role.name).apply()
-        if (changed || connectedEndpoint == null) restartTransport()
+
+        // Antes, toda chamada de setRole reiniciava o rádio quando ainda não havia conexão.
+        // A Activity e o Service chamavam este método quase simultaneamente, gerando uma corrida.
+        if (changed || transportState == TransportState.IDLE) {
+            restartTransport()
+        }
     }
 
     fun getRole(): Role = role
@@ -253,36 +297,35 @@ class RemoteControlService : Service() {
     fun isAuthenticated(): Boolean = authenticated
 
     fun acceptPairing(endpointId: String) {
+        val peer = pendingPeers[endpointId]
+        val trustedId = preferences.getString(KEY_TRUSTED_PEER_ID, null)
+        if (peer != null && !trustedId.isNullOrBlank() && peer.id != trustedId) {
+            clearTrustedPeer()
+        }
+        manuallyApprovedEndpoints.add(endpointId)
         acceptEndpoint(endpointId)
     }
 
     fun rejectPairing(endpointId: String) {
         connectionsClient.rejectConnection(endpointId)
         pendingPeers.remove(endpointId)
+        manuallyApprovedEndpoints.remove(endpointId)
+        transportState = TransportState.IDLE
         currentStatus = "Pareamento cancelado"
         notifyStatus()
         scheduleReconnect()
     }
 
     fun restartPairing() {
-        if (connectedEndpoint != null) {
-            connectionsClient.disconnectFromEndpoint(connectedEndpoint!!)
-        } else {
-            restartTransport()
-        }
+        restartTransport()
     }
 
     fun forgetPairing() {
-        preferences.edit()
-            .remove(KEY_TRUSTED_PEER_ID)
-            .remove(KEY_TRUSTED_PEER_NAME)
-            .remove(KEY_PAIR_TOKEN)
-            .apply()
+        clearTrustedPeer()
         authenticated = false
-        connectedEndpoint?.let { connectionsClient.disconnectFromEndpoint(it) }
         currentStatus = "Pareamento apagado. Procurando um novo aparelho…"
         notifyStatus()
-        scheduleReconnect()
+        restartTransport()
     }
 
     fun sendPlay(play: Boolean) {
@@ -308,41 +351,93 @@ class RemoteControlService : Service() {
     }
 
     private fun restartTransport() {
+        val generation = ++transportGeneration
         mainHandler.removeCallbacks(reconnectRunnable)
-        connectionsClient.stopAllEndpoints()
+        mainHandler.removeCallbacks(discoveryWatchdog)
+
         connectionsClient.stopAdvertising()
         connectionsClient.stopDiscovery()
+        connectionsClient.stopAllEndpoints()
+
         connectedEndpoint = null
         connectedPeer = null
         requestedEndpoint = null
         authenticated = false
         pendingPairToken = null
+        pendingPeers.clear()
+        manuallyApprovedEndpoints.clear()
+        transportState = TransportState.STARTING
 
-        if (role == Role.PLAYER) startAdvertising() else startDiscovery()
+        currentStatus = if (role == Role.PLAYER) {
+            "Preparando o anúncio do reprodutor…"
+        } else {
+            "Preparando a busca pelo reprodutor…"
+        }
+        notifyStatus()
+
+        // Dá tempo para o Google Play Services encerrar a operação anterior antes de iniciar outra.
+        mainHandler.postDelayed({
+            if (generation != transportGeneration || connectedEndpoint != null) return@postDelayed
+            if (role == Role.PLAYER) {
+                startAdvertising(generation)
+            } else {
+                startDiscovery(generation)
+            }
+        }, TRANSPORT_SETTLE_DELAY_MS)
     }
 
-    private fun startAdvertising() {
-        currentStatus = "Reprodutor disponível como Quarto do bebê"
-        notifyStatus()
+    private fun startAdvertising(generation: Int) {
+        if (generation != transportGeneration || role != Role.PLAYER) return
         val options = AdvertisingOptions.Builder().setStrategy(STRATEGY).build()
         connectionsClient
             .startAdvertising(localEndpointName(), SERVICE_ID, connectionLifecycleCallback, options)
+            .addOnSuccessListener {
+                if (generation != transportGeneration || role != Role.PLAYER) return@addOnSuccessListener
+                transportState = TransportState.ADVERTISING
+                currentStatus = "Disponibilidade confirmada. Aguardando o celular Controle…"
+                notifyStatus()
+            }
             .addOnFailureListener { error ->
-                Log.e(TAG, "Falha ao anunciar reprodutor", error)
-                currentStatus = "Não foi possível ficar disponível. Verifique as permissões."
+                if (generation != transportGeneration) return@addOnFailureListener
+                val code = statusCodeName(error)
+                if (code.contains("ALREADY_ADVERTISING")) {
+                    transportState = TransportState.ADVERTISING
+                    currentStatus = "Disponibilidade confirmada. Aguardando o celular Controle…"
+                } else {
+                    transportState = TransportState.IDLE
+                    currentStatus = formatFailure("Falha ao anunciar", error)
+                }
                 notifyStatus()
             }
     }
 
-    private fun startDiscovery() {
-        currentStatus = "Procurando o reprodutor próximo…"
-        notifyStatus()
+    private fun startDiscovery(generation: Int) {
+        if (generation != transportGeneration || role != Role.CONTROLLER) return
         val options = DiscoveryOptions.Builder().setStrategy(STRATEGY).build()
         connectionsClient
             .startDiscovery(SERVICE_ID, discoveryCallback, options)
+            .addOnSuccessListener {
+                if (generation != transportGeneration || role != Role.CONTROLLER) {
+                    return@addOnSuccessListener
+                }
+                transportState = TransportState.DISCOVERING
+                currentStatus = "Busca confirmada. Procurando o reprodutor próximo…"
+                notifyStatus()
+                mainHandler.removeCallbacks(discoveryWatchdog)
+                mainHandler.postDelayed(discoveryWatchdog, DISCOVERY_WATCHDOG_MS)
+            }
             .addOnFailureListener { error ->
-                Log.e(TAG, "Falha ao descobrir reprodutor", error)
-                currentStatus = "Não foi possível procurar. Verifique as permissões."
+                if (generation != transportGeneration) return@addOnFailureListener
+                val code = statusCodeName(error)
+                if (code.contains("ALREADY_DISCOVERING")) {
+                    transportState = TransportState.DISCOVERING
+                    currentStatus = "Busca confirmada. Procurando o reprodutor próximo…"
+                    mainHandler.removeCallbacks(discoveryWatchdog)
+                    mainHandler.postDelayed(discoveryWatchdog, DISCOVERY_WATCHDOG_MS)
+                } else {
+                    transportState = TransportState.IDLE
+                    currentStatus = formatFailure("Falha ao procurar", error)
+                }
                 notifyStatus()
             }
     }
@@ -352,7 +447,9 @@ class RemoteControlService : Service() {
             .acceptConnection(endpointId, payloadCallback)
             .addOnFailureListener { error ->
                 Log.e(TAG, "Falha ao aceitar conexão", error)
-                currentStatus = "Falha ao aceitar o pareamento"
+                manuallyApprovedEndpoints.remove(endpointId)
+                transportState = TransportState.IDLE
+                currentStatus = formatFailure("Falha ao aceitar o pareamento", error)
                 notifyStatus()
                 scheduleReconnect()
             }
@@ -366,7 +463,7 @@ class RemoteControlService : Service() {
     private fun handleMessage(endpointId: String, message: JSONObject) {
         if (endpointId != connectedEndpoint) return
         when (message.optString("type")) {
-            "pair" -> handlePairRequest(message.optString("token"))
+            "pair" -> handlePairRequest(message.optString("token"), endpointId)
             "pair_ack" -> handlePairAcknowledgement(message.optString("token"))
             "hello" -> handleHello(message.optString("token"))
             "hello_ack" -> handleHelloAcknowledgement(message.optString("token"))
@@ -376,17 +473,22 @@ class RemoteControlService : Service() {
         }
     }
 
-    private fun handlePairRequest(token: String) {
+    private fun handlePairRequest(token: String, endpointId: String) {
         if (role != Role.PLAYER || token.isBlank()) return
 
-        val existingToken = preferences.getString(KEY_PAIR_TOKEN, null)
         val trustedId = preferences.getString(KEY_TRUSTED_PEER_ID, null)
-        if (!existingToken.isNullOrBlank() && connectedPeer?.id != trustedId) {
-            disconnectForAuthenticationFailure()
-            return
+        val peerId = connectedPeer?.id
+        if (!trustedId.isNullOrBlank() && peerId != trustedId) {
+            if (endpointId in manuallyApprovedEndpoints) {
+                clearTrustedPeer()
+            } else {
+                disconnectForAuthenticationFailure()
+                return
+            }
         }
 
         saveTrustedPeer(token)
+        manuallyApprovedEndpoints.remove(endpointId)
         authenticated = true
         sendMessage(JSONObject().put("type", "pair_ack").put("token", token))
         currentStatus = "Pareado com ${connectedPeer?.name ?: "controle remoto"}"
@@ -398,6 +500,7 @@ class RemoteControlService : Service() {
         if (role != Role.CONTROLLER || token.isBlank() || token != pendingPairToken) return
         saveTrustedPeer(token)
         pendingPairToken = null
+        connectedEndpoint?.let { manuallyApprovedEndpoints.remove(it) }
         authenticated = true
         currentStatus = "Controlando ${connectedPeer?.name ?: "reprodutor"}"
         notifyStatus()
@@ -452,6 +555,14 @@ class RemoteControlService : Service() {
             .putString(KEY_TRUSTED_PEER_ID, peer.id)
             .putString(KEY_TRUSTED_PEER_NAME, peer.name)
             .putString(KEY_PAIR_TOKEN, token)
+            .apply()
+    }
+
+    private fun clearTrustedPeer() {
+        preferences.edit()
+            .remove(KEY_TRUSTED_PEER_ID)
+            .remove(KEY_TRUSTED_PEER_NAME)
+            .remove(KEY_PAIR_TOKEN)
             .apply()
     }
 
@@ -555,7 +666,22 @@ class RemoteControlService : Service() {
         val payload = Payload.fromBytes(message.toString().toByteArray(Charsets.UTF_8))
         connectionsClient.sendPayload(endpoint, payload).addOnFailureListener { error ->
             Log.e(TAG, "Falha ao enviar comando remoto", error)
+            currentStatus = formatFailure("Falha ao enviar dados", error)
+            notifyStatus()
         }
+    }
+
+    private fun statusCodeName(error: Exception): String =
+        if (error is ApiException) {
+            ConnectionsStatusCodes.getStatusCodeString(error.statusCode)
+        } else {
+            error.javaClass.simpleName.ifBlank { "ERRO_DESCONHECIDO" }
+        }
+
+    private fun formatFailure(prefix: String, error: Exception): String {
+        val code = statusCodeName(error)
+        val number = (error as? ApiException)?.statusCode
+        return if (number == null) "$prefix: $code" else "$prefix: $code ($number)"
     }
 
     private fun storedRole(): Role = preferences.getString(KEY_REMOTE_ROLE, Role.PLAYER.name)
@@ -646,7 +772,9 @@ class RemoteControlService : Service() {
         private val STRATEGY = Strategy.P2P_POINT_TO_POINT
         private const val CHANNEL_ID = "remote_connection"
         private const val NOTIFICATION_ID = 8
-        private const val RECONNECT_DELAY_MS = 1_500L
+        private const val TRANSPORT_SETTLE_DELAY_MS = 350L
+        private const val RECONNECT_DELAY_MS = 2_000L
+        private const val DISCOVERY_WATCHDOG_MS = 10_000L
         private const val STATE_SETTLE_DELAY_MS = 180L
 
         private const val DEFAULT_VOLUME = 0.35f
