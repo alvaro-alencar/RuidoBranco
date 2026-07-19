@@ -10,6 +10,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
@@ -22,6 +23,8 @@ import android.widget.RadioButton
 import android.widget.RadioGroup
 import android.widget.SeekBar
 import android.widget.TextView
+import com.google.android.gms.common.ConnectionResult
+import com.google.android.gms.common.GoogleApiAvailability
 import kotlin.math.roundToInt
 
 class MainActivity : Activity() {
@@ -52,6 +55,7 @@ class MainActivity : Activity() {
     private var remoteService: RemoteControlService? = null
     private var remoteBound = false
     private var bindingRequested = false
+    private var restartWhenBound = false
     private var remoteConnected = false
     private var remoteAuthenticated = false
     private var pairedName: String? = null
@@ -59,7 +63,8 @@ class MainActivity : Activity() {
     private var remoteBattery = -1
     private var pairingDialog: AlertDialog? = null
     private var wifiDialog: AlertDialog? = null
-    private var waitingForWifiSettings = false
+    private var locationDialog: AlertDialog? = null
+    private var waitingForSettings = false
 
     private val remoteListener = object : RemoteControlService.Listener {
         override fun onConnectionStatus(
@@ -101,7 +106,11 @@ class MainActivity : Activity() {
             bindingRequested = false
             remoteService?.addListener(remoteListener)
             remoteService?.setRole(currentRole)
-            if (currentRole == RemoteControlService.Role.CONTROLLER) {
+
+            if (restartWhenBound) {
+                restartWhenBound = false
+                remoteService?.restartPairing()
+            } else if (currentRole == RemoteControlService.Role.CONTROLLER) {
                 remoteService?.requestRemoteState()
             }
         }
@@ -110,6 +119,7 @@ class MainActivity : Activity() {
             remoteService = null
             remoteBound = false
             bindingRequested = false
+            restartWhenBound = false
             remoteConnected = false
             remoteAuthenticated = false
             connectionStatus = "Serviço de controle desconectado"
@@ -199,10 +209,10 @@ class MainActivity : Activity() {
             remoteService?.requestRemoteState()
         }
 
-        if (waitingForWifiSettings) {
-            waitingForWifiSettings = false
+        if (waitingForSettings) {
+            waitingForSettings = false
             prepareRemoteLayer(interactive = false, forceRestart = false)
-        } else if (!remoteBound && allRemotePermissionsGranted()) {
+        } else if (!remoteBound && !bindingRequested && allRemotePermissionsGranted()) {
             prepareRemoteLayer(interactive = false, forceRestart = false)
         }
         updateUi()
@@ -211,10 +221,12 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         pairingDialog?.dismiss()
         wifiDialog?.dismiss()
+        locationDialog?.dismiss()
         remoteService?.removeListener(remoteListener)
         if (remoteBound) unbindService(serviceConnection)
         remoteBound = false
         bindingRequested = false
+        restartWhenBound = false
         super.onDestroy()
     }
 
@@ -353,6 +365,21 @@ class MainActivity : Activity() {
             return
         }
 
+        val playServices = GoogleApiAvailability.getInstance()
+        val playServicesStatus = playServices.isGooglePlayServicesAvailable(this)
+        if (playServicesStatus != ConnectionResult.SUCCESS) {
+            connectionStatus = getString(R.string.play_services_required, playServicesStatus)
+            updateUi()
+            if (interactive && playServices.isUserResolvableError(playServicesStatus)) {
+                playServices.getErrorDialog(
+                    this,
+                    playServicesStatus,
+                    PLAY_SERVICES_REQUEST_CODE
+                )?.show()
+            }
+            return
+        }
+
         val bluetoothAdapter = getSystemService(BluetoothManager::class.java)?.adapter
         if (bluetoothAdapter == null) {
             connectionStatus = getString(R.string.bluetooth_unavailable)
@@ -378,19 +405,32 @@ class MainActivity : Activity() {
             return
         }
 
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2 && !isLocationEnabled()) {
+            connectionStatus = getString(R.string.location_required)
+            updateUi()
+            if (interactive) showLocationRequiredDialog()
+            return
+        }
+
         startRemoteLayer(forceRestart)
     }
 
     private fun startRemoteLayer(forceRestart: Boolean) {
         val intent = Intent(this, RemoteControlService::class.java)
             .putExtra(RemoteControlService.EXTRA_ROLE, currentRole.name)
-        startForegroundService(intent)
+
         if (!remoteBound && !bindingRequested) {
+            restartWhenBound = forceRestart
             bindingRequested = true
+            startForegroundService(intent)
             bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        } else if (remoteBound) {
+            remoteService?.setRole(currentRole)
+            if (forceRestart) remoteService?.restartPairing()
         } else if (forceRestart) {
-            remoteService?.restartPairing()
+            restartWhenBound = true
         }
+
         requestNotificationPermissionIfNeeded()
     }
 
@@ -402,6 +442,7 @@ class MainActivity : Activity() {
                 BLUETOOTH_ENABLE_REQUEST_CODE
             )
         }.onFailure {
+            waitingForSettings = true
             startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
         }
     }
@@ -412,7 +453,7 @@ class MainActivity : Activity() {
             .setTitle(R.string.wifi_required_title)
             .setMessage(R.string.wifi_required_message)
             .setPositiveButton(R.string.open_wifi_settings) { _, _ ->
-                waitingForWifiSettings = true
+                waitingForSettings = true
                 val action = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     Settings.Panel.ACTION_WIFI
                 } else {
@@ -422,6 +463,33 @@ class MainActivity : Activity() {
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
+    }
+
+    private fun showLocationRequiredDialog() {
+        if (locationDialog?.isShowing == true || isFinishing || isDestroyed) return
+        locationDialog = AlertDialog.Builder(this)
+            .setTitle(R.string.location_required_title)
+            .setMessage(R.string.location_required_message)
+            .setPositiveButton(R.string.open_location_settings) { _, _ ->
+                waitingForSettings = true
+                startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun isLocationEnabled(): Boolean {
+        val manager = getSystemService(LocationManager::class.java)
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            manager.isLocationEnabled
+        } else {
+            @Suppress("DEPRECATION")
+            Settings.Secure.getInt(
+                contentResolver,
+                Settings.Secure.LOCATION_MODE,
+                Settings.Secure.LOCATION_MODE_OFF
+            ) != Settings.Secure.LOCATION_MODE_OFF
+        }
     }
 
     private fun showPairingDialog(endpointId: String, peerName: String, digits: String) {
@@ -494,6 +562,7 @@ class MainActivity : Activity() {
             .setTitle(R.string.remote_permissions_settings_title)
             .setMessage(R.string.remote_permissions_settings_message)
             .setPositiveButton(R.string.open_app_settings) { _, _ ->
+                waitingForSettings = true
                 startActivity(
                     Intent(
                         Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
@@ -571,7 +640,7 @@ class MainActivity : Activity() {
 
         pairButton.setText(
             when {
-                remoteConnected -> R.string.disconnect_remote
+                remoteConnected -> R.string.restart_remote
                 pairedName != null -> R.string.reconnect_remote
                 currentRole == RemoteControlService.Role.PLAYER -> R.string.make_player_available
                 else -> R.string.find_player
@@ -598,6 +667,7 @@ class MainActivity : Activity() {
         private const val NEARBY_PERMISSIONS_REQUEST_CODE = 101
         private const val NOTIFICATION_PERMISSION_REQUEST_CODE = 102
         private const val BLUETOOTH_ENABLE_REQUEST_CODE = 103
+        private const val PLAY_SERVICES_REQUEST_CODE = 104
         private const val ACCESS_LOCAL_NETWORK_PERMISSION =
             "android.permission.ACCESS_LOCAL_NETWORK"
         private const val KEY_NEARBY_PERMISSION_REQUESTED = "nearby_permission_requested"
