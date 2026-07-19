@@ -10,14 +10,14 @@ android {
         applicationId = "com.alvaro.ruidobranco"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "1.2.1"
+        versionCode = 5
+        versionName = "1.2.2"
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Assinatura instalável para teste da v1.2.1. A publicação na Play Store
+            // Assinatura instalável para teste da v1.2.2. A publicação na Play Store
             // usará uma chave de upload permanente, armazenada fora do repositório.
             signingConfig = signingConfigs.getByName("debug")
         }
