@@ -3,8 +3,43 @@
     <string name="app_name">Ruído Branco</string>
     <string name="subtitle">Para o sono do bebê</string>
     <string name="logo_description">Lua dormindo com letras Z</string>
+
+    <string name="device_mode_title">Como este celular será usado?</string>
+    <string name="player_mode">🔊 Reprodutor</string>
+    <string name="controller_mode">🎛 Controle</string>
+    <string name="remote_preparing">Preparando conexão local…</string>
+    <string name="make_player_available">Ficar disponível</string>
+    <string name="find_player">Procurar reprodutor</string>
+    <string name="reconnect_remote">Reconectar</string>
+    <string name="restart_remote">Reiniciar conexão</string>
+    <string name="disconnect_remote">Desconectar</string>
+    <string name="forget">Esquecer</string>
+    <string name="forget_pairing_title">Esquecer o outro celular?</string>
+    <string name="forget_pairing_message">O código de segurança salvo será apagado e será necessário parear novamente.</string>
+    <string name="confirm_pairing_title">Confirmar pareamento</string>
+    <string name="confirm_pairing_message">Confira se este código aparece também em %1$s:\n\n%2$s\n\nConfirme nos dois celulares.</string>
+    <string name="confirm">Confirmar</string>
+    <string name="remote_permissions_requesting">Autorize o acesso a dispositivos próximos para conectar os celulares.</string>
+    <string name="remote_permissions_denied">A permissão de dispositivos próximos não foi concedida. A reprodução local continua disponível.</string>
+    <string name="remote_permissions_settings_title">Permissão necessária</string>
+    <string name="remote_permissions_settings_message">Abra as configurações do aplicativo e permita “Dispositivos próximos”.</string>
+    <string name="open_app_settings">Abrir configurações</string>
+    <string name="bluetooth_required">Ative o Bluetooth nos dois celulares para usar o controle remoto.</string>
+    <string name="bluetooth_unavailable">Este aparelho não possui Bluetooth compatível.</string>
+    <string name="wifi_required">Ative o Wi‑Fi. Não é necessário ter internet.</string>
+    <string name="wifi_required_title">Ativar Wi‑Fi</string>
+    <string name="wifi_required_message">A conexão entre os celulares usa o rádio Wi‑Fi local. A internet pode continuar desligada.</string>
+    <string name="open_wifi_settings">Abrir Wi‑Fi</string>
+    <string name="location_required">Ative a localização do sistema neste aparelho para a descoberta local.</string>
+    <string name="location_required_title">Ativar localização</string>
+    <string name="location_required_message">Em versões mais antigas do Android, a descoberta de aparelhos próximos exige que a localização do sistema esteja ligada. O app não coleta sua posição.</string>
+    <string name="open_location_settings">Abrir localização</string>
+    <string name="play_services_required">O Google Play Services precisa ser atualizado ou ativado. Código: %1$d.</string>
+    <string name="remote_battery_suffix"> • bateria do reprodutor: %1$d%%</string>
+
     <string name="status_playing">● Ruído ativo</string>
     <string name="status_stopped">○ Desligado</string>
+    <string name="status_waiting_remote">○ Aguardando reprodutor</string>
     <string name="play">Ligar</string>
     <string name="stop">Desligar</string>
     <string name="volume_default">Volume do ruído: 35%</string>
@@ -22,10 +57,16 @@
     <string name="tone_neutral">neutro</string>
     <string name="tone_bright">agudo</string>
     <string name="tone_very_bright">muito agudo</string>
-    <string name="offline_message">100% offline • contínuo • sem faixa terminando</string>
+    <string name="offline_message">Áudio offline • controle direto entre celulares • sem nuvem</string>
     <string name="safety_message">O volume de mídia do celular também interfere no resultado. Comece baixo e mantenha a caixa de som a uma distância segura do berço.</string>
+
     <string name="notification_channel_name">Reprodução contínua</string>
     <string name="notification_channel_description">Mantém o ruído branco ativo em segundo plano</string>
     <string name="notification_title">Ruído branco ativo</string>
     <string name="notification_text">Offline • volume %1$d%% • tom %2$s</string>
+
+    <string name="remote_notification_channel">Conexão entre celulares</string>
+    <string name="remote_notification_channel_description">Mantém o reprodutor acessível ao controle remoto</string>
+    <string name="remote_notification_player_title">Ruído Branco • Reprodutor</string>
+    <string name="remote_notification_controller_title">Ruído Branco • Controle</string>
 </resources>
