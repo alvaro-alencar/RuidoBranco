@@ -11,6 +11,7 @@
     <string name="make_player_available">Ficar disponível</string>
     <string name="find_player">Procurar reprodutor</string>
     <string name="reconnect_remote">Reconectar</string>
+    <string name="restart_remote">Reiniciar conexão</string>
     <string name="disconnect_remote">Desconectar</string>
     <string name="forget">Esquecer</string>
     <string name="forget_pairing_title">Esquecer o outro celular?</string>
@@ -29,6 +30,11 @@
     <string name="wifi_required_title">Ativar Wi‑Fi</string>
     <string name="wifi_required_message">A conexão entre os celulares usa o rádio Wi‑Fi local. A internet pode continuar desligada.</string>
     <string name="open_wifi_settings">Abrir Wi‑Fi</string>
+    <string name="location_required">Ative a localização do sistema neste aparelho para a descoberta local.</string>
+    <string name="location_required_title">Ativar localização</string>
+    <string name="location_required_message">Em versões mais antigas do Android, a descoberta de aparelhos próximos exige que a localização do sistema esteja ligada. O app não coleta sua posição.</string>
+    <string name="open_location_settings">Abrir localização</string>
+    <string name="play_services_required">O Google Play Services precisa ser atualizado ou ativado. Código: %1$d.</string>
     <string name="remote_battery_suffix"> • bateria do reprodutor: %1$d%%</string>
 
     <string name="status_playing">● Ruído ativo</string>
