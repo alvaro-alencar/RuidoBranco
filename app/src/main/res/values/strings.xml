@@ -18,7 +18,17 @@
     <string name="confirm_pairing_title">Confirmar pareamento</string>
     <string name="confirm_pairing_message">Confira se este código aparece também em %1$s:\n\n%2$s\n\nConfirme nos dois celulares.</string>
     <string name="confirm">Confirmar</string>
-    <string name="remote_permissions_denied">O controle remoto precisa das permissões de dispositivos próximos. A reprodução local continua disponível.</string>
+    <string name="remote_permissions_requesting">Autorize o acesso a dispositivos próximos para conectar os celulares.</string>
+    <string name="remote_permissions_denied">A permissão de dispositivos próximos não foi concedida. A reprodução local continua disponível.</string>
+    <string name="remote_permissions_settings_title">Permissão necessária</string>
+    <string name="remote_permissions_settings_message">Abra as configurações do aplicativo e permita “Dispositivos próximos”.</string>
+    <string name="open_app_settings">Abrir configurações</string>
+    <string name="bluetooth_required">Ative o Bluetooth nos dois celulares para usar o controle remoto.</string>
+    <string name="bluetooth_unavailable">Este aparelho não possui Bluetooth compatível.</string>
+    <string name="wifi_required">Ative o Wi‑Fi. Não é necessário ter internet.</string>
+    <string name="wifi_required_title">Ativar Wi‑Fi</string>
+    <string name="wifi_required_message">A conexão entre os celulares usa o rádio Wi‑Fi local. A internet pode continuar desligada.</string>
+    <string name="open_wifi_settings">Abrir Wi‑Fi</string>
     <string name="remote_battery_suffix"> • bateria do reprodutor: %1$d%%</string>
 
     <string name="status_playing">● Ruído ativo</string>
