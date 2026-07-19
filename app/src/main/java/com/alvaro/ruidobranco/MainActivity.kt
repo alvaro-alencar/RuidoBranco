@@ -3,14 +3,19 @@ package com.alvaro.ruidobranco
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.provider.Settings
 import android.view.View
 import android.widget.Button
 import android.widget.RadioButton
@@ -53,6 +58,8 @@ class MainActivity : Activity() {
     private var connectionStatus = "Preparando controle local…"
     private var remoteBattery = -1
     private var pairingDialog: AlertDialog? = null
+    private var wifiDialog: AlertDialog? = null
+    private var waitingForWifiSettings = false
 
     private val remoteListener = object : RemoteControlService.Listener {
         override fun onConnectionStatus(
@@ -169,11 +176,7 @@ class MainActivity : Activity() {
         decreaseButton.setOnClickListener { changeVolume(-VOLUME_STEP) }
         increaseButton.setOnClickListener { changeVolume(VOLUME_STEP) }
         pairButton.setOnClickListener {
-            if (allRemotePermissionsGranted()) {
-                remoteService?.restartPairing()
-            } else {
-                requestRequiredPermissions()
-            }
+            prepareRemoteLayer(interactive = true, forceRestart = true)
         }
         forgetButton.setOnClickListener {
             AlertDialog.Builder(this)
@@ -184,11 +187,7 @@ class MainActivity : Activity() {
                 .show()
         }
 
-        if (allRemotePermissionsGranted()) {
-            startRemoteLayer()
-        } else {
-            requestRequiredPermissions()
-        }
+        prepareRemoteLayer(interactive = true, forceRestart = false)
         updateUi()
     }
 
@@ -199,16 +198,32 @@ class MainActivity : Activity() {
         } else {
             remoteService?.requestRemoteState()
         }
+
+        if (waitingForWifiSettings) {
+            waitingForWifiSettings = false
+            prepareRemoteLayer(interactive = false, forceRestart = false)
+        } else if (!remoteBound && allRemotePermissionsGranted()) {
+            prepareRemoteLayer(interactive = false, forceRestart = false)
+        }
         updateUi()
     }
 
     override fun onDestroy() {
         pairingDialog?.dismiss()
+        wifiDialog?.dismiss()
         remoteService?.removeListener(remoteListener)
         if (remoteBound) unbindService(serviceConnection)
         remoteBound = false
         bindingRequested = false
         super.onDestroy()
+    }
+
+    @Deprecated("Deprecated in Android, retained for Bluetooth enable result")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == BLUETOOTH_ENABLE_REQUEST_CODE) {
+            prepareRemoteLayer(interactive = false, forceRestart = false)
+        }
     }
 
     override fun onRequestPermissionsResult(
@@ -217,12 +232,17 @@ class MainActivity : Activity() {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode != PERMISSIONS_REQUEST_CODE) return
-        if (allRemotePermissionsGranted()) {
-            startRemoteLayer()
-        } else {
-            connectionStatus = getString(R.string.remote_permissions_denied)
-            updateUi()
+        when (requestCode) {
+            NEARBY_PERMISSIONS_REQUEST_CODE -> {
+                if (allRemotePermissionsGranted()) {
+                    prepareRemoteLayer(interactive = true, forceRestart = false)
+                } else {
+                    connectionStatus = getString(R.string.remote_permissions_denied)
+                    updateUi()
+                }
+            }
+
+            NOTIFICATION_PERMISSION_REQUEST_CODE -> Unit
         }
     }
 
@@ -234,7 +254,12 @@ class MainActivity : Activity() {
         remoteConnected = false
         remoteAuthenticated = false
         if (newRole == RemoteControlService.Role.PLAYER) loadLocalState()
-        remoteService?.setRole(newRole)
+
+        if (remoteBound) {
+            remoteService?.setRole(newRole)
+        } else {
+            prepareRemoteLayer(interactive = false, forceRestart = false)
+        }
         updateUi()
     }
 
@@ -320,14 +345,83 @@ class MainActivity : Activity() {
             .apply()
     }
 
-    private fun startRemoteLayer() {
+    private fun prepareRemoteLayer(interactive: Boolean, forceRestart: Boolean) {
+        if (!allRemotePermissionsGranted()) {
+            connectionStatus = getString(R.string.remote_permissions_requesting)
+            updateUi()
+            if (interactive) requestNearbyPermissions()
+            return
+        }
+
+        val bluetoothAdapter = getSystemService(BluetoothManager::class.java)?.adapter
+        if (bluetoothAdapter == null) {
+            connectionStatus = getString(R.string.bluetooth_unavailable)
+            updateUi()
+            return
+        }
+
+        val bluetoothEnabled = runCatching { bluetoothAdapter.isEnabled }.getOrDefault(false)
+        if (!bluetoothEnabled) {
+            connectionStatus = getString(R.string.bluetooth_required)
+            updateUi()
+            if (interactive) requestBluetoothEnable()
+            return
+        }
+
+        val wifiEnabled = runCatching {
+            getSystemService(WifiManager::class.java).isWifiEnabled
+        }.getOrDefault(false)
+        if (!wifiEnabled) {
+            connectionStatus = getString(R.string.wifi_required)
+            updateUi()
+            if (interactive) showWifiRequiredDialog()
+            return
+        }
+
+        startRemoteLayer(forceRestart)
+    }
+
+    private fun startRemoteLayer(forceRestart: Boolean) {
         val intent = Intent(this, RemoteControlService::class.java)
             .putExtra(RemoteControlService.EXTRA_ROLE, currentRole.name)
         startForegroundService(intent)
         if (!remoteBound && !bindingRequested) {
             bindingRequested = true
             bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        } else if (forceRestart) {
+            remoteService?.restartPairing()
         }
+        requestNotificationPermissionIfNeeded()
+    }
+
+    private fun requestBluetoothEnable() {
+        runCatching {
+            @Suppress("DEPRECATION")
+            startActivityForResult(
+                Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE),
+                BLUETOOTH_ENABLE_REQUEST_CODE
+            )
+        }.onFailure {
+            startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+        }
+    }
+
+    private fun showWifiRequiredDialog() {
+        if (wifiDialog?.isShowing == true || isFinishing || isDestroyed) return
+        wifiDialog = AlertDialog.Builder(this)
+            .setTitle(R.string.wifi_required_title)
+            .setMessage(R.string.wifi_required_message)
+            .setPositiveButton(R.string.open_wifi_settings) { _, _ ->
+                waitingForWifiSettings = true
+                val action = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    Settings.Panel.ACTION_WIFI
+                } else {
+                    Settings.ACTION_WIFI_SETTINGS
+                }
+                startActivity(Intent(action))
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun showPairingDialog(endpointId: String, peerName: String, digits: String) {
@@ -346,10 +440,9 @@ class MainActivity : Activity() {
             .show()
     }
 
-    private fun requiredPermissions(): Array<String> {
+    private fun requiredNearbyPermissions(): Array<String> {
         val permissions = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissions += Manifest.permission.POST_NOTIFICATIONS
             permissions += Manifest.permission.NEARBY_WIFI_DEVICES
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -357,29 +450,73 @@ class MainActivity : Activity() {
             permissions += Manifest.permission.BLUETOOTH_CONNECT
             permissions += Manifest.permission.BLUETOOTH_ADVERTISE
         }
-        if (Build.VERSION.SDK_INT in Build.VERSION_CODES.Q..Build.VERSION_CODES.R) {
+        if (Build.VERSION.SDK_INT in Build.VERSION_CODES.Q..Build.VERSION_CODES.S_V2) {
             permissions += Manifest.permission.ACCESS_FINE_LOCATION
         }
         if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
             permissions += Manifest.permission.ACCESS_COARSE_LOCATION
         }
+        if (Build.VERSION.SDK_INT >= 37) {
+            permissions += ACCESS_LOCAL_NETWORK_PERMISSION
+        }
         return permissions.distinct().toTypedArray()
     }
 
-    private fun allRemotePermissionsGranted(): Boolean =
-        requiredPermissions().all { permission ->
-            checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
-        }
-
-    private fun requestRequiredPermissions() {
-        val missing = requiredPermissions().filter { permission ->
+    private fun missingNearbyPermissions(): List<String> =
+        requiredNearbyPermissions().filter { permission ->
             checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED
         }
-        if (missing.isNotEmpty()) {
-            requestPermissions(missing.toTypedArray(), PERMISSIONS_REQUEST_CODE)
-        } else {
-            startRemoteLayer()
+
+    private fun allRemotePermissionsGranted(): Boolean = missingNearbyPermissions().isEmpty()
+
+    private fun requestNearbyPermissions() {
+        val missing = missingNearbyPermissions()
+        if (missing.isEmpty()) {
+            prepareRemoteLayer(interactive = true, forceRestart = false)
+            return
         }
+
+        val requestedBefore = preferences.getBoolean(KEY_NEARBY_PERMISSION_REQUESTED, false)
+        val permanentlyDenied = requestedBefore && missing.any { permission ->
+            !shouldShowRequestPermissionRationale(permission)
+        }
+        if (permanentlyDenied) {
+            showPermissionSettingsDialog()
+            return
+        }
+
+        preferences.edit().putBoolean(KEY_NEARBY_PERMISSION_REQUESTED, true).apply()
+        requestPermissions(missing.toTypedArray(), NEARBY_PERMISSIONS_REQUEST_CODE)
+    }
+
+    private fun showPermissionSettingsDialog() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.remote_permissions_settings_title)
+            .setMessage(R.string.remote_permissions_settings_message)
+            .setPositiveButton(R.string.open_app_settings) { _, _ ->
+                startActivity(
+                    Intent(
+                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.parse("package:$packageName")
+                    )
+                )
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+            return
+        }
+        if (preferences.getBoolean(KEY_NOTIFICATION_PERMISSION_REQUESTED, false)) return
+
+        preferences.edit().putBoolean(KEY_NOTIFICATION_PERMISSION_REQUESTED, true).apply()
+        requestPermissions(
+            arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+            NOTIFICATION_PERMISSION_REQUEST_CODE
+        )
     }
 
     private fun updateUi() {
@@ -458,7 +595,15 @@ class MainActivity : Activity() {
         ((progress.toFloat() / TONE_STEPS) * 2f) - 1f
 
     companion object {
-        private const val PERMISSIONS_REQUEST_CODE = 101
+        private const val NEARBY_PERMISSIONS_REQUEST_CODE = 101
+        private const val NOTIFICATION_PERMISSION_REQUEST_CODE = 102
+        private const val BLUETOOTH_ENABLE_REQUEST_CODE = 103
+        private const val ACCESS_LOCAL_NETWORK_PERMISSION =
+            "android.permission.ACCESS_LOCAL_NETWORK"
+        private const val KEY_NEARBY_PERMISSION_REQUESTED = "nearby_permission_requested"
+        private const val KEY_NOTIFICATION_PERMISSION_REQUESTED =
+            "notification_permission_requested"
+
         private const val DEFAULT_VOLUME = 0.35f
         private const val MIN_VOLUME = 0.05f
         private const val MAX_VOLUME = 1.00f
