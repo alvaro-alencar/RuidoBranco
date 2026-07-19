@@ -17,6 +17,9 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            // Assinatura instalável para teste da v1.2. A publicação na Play Store
+            // usará uma chave de upload permanente, armazenada fora do repositório.
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
