@@ -8,9 +8,9 @@
 
     <application
         android:allowBackup="false"
-        android:icon="@drawable/ic_noise"
+        android:icon="@drawable/ic_sleepy_moon"
         android:label="@string/app_name"
-        android:roundIcon="@drawable/ic_noise"
+        android:roundIcon="@drawable/ic_sleepy_moon"
         android:supportsRtl="true"
         android:theme="@style/Theme.RuidoBranco"
         android:usesCleartextTraffic="false">
