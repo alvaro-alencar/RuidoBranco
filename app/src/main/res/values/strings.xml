@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Ruído Branco</string>
+    <string name="moon_symbol">☾</string>
+    <string name="subtitle">Para o sono do Saulo</string>
+    <string name="status_playing">● Ruído ativo</string>
+    <string name="status_stopped">○ Desligado</string>
+    <string name="play">Ligar</string>
+    <string name="stop">Desligar</string>
+    <string name="volume_default">Volume do ruído: 35%</string>
+    <string name="volume_value">Volume do ruído: %1$d%%</string>
+    <string name="decrease_volume">Diminuir volume</string>
+    <string name="increase_volume">Aumentar volume</string>
+    <string name="offline_message">100% offline • contínuo • sem faixa terminando</string>
+    <string name="safety_message">O volume de mídia do celular também interfere no resultado. Comece baixo e mantenha a caixa de som a uma distância segura do berço.</string>
+    <string name="notification_channel_name">Reprodução contínua</string>
+    <string name="notification_channel_description">Mantém o ruído branco ativo em segundo plano</string>
+    <string name="notification_title">Ruído branco ativo</string>
+    <string name="notification_text">Offline, contínuo, volume interno em %1$d%%</string>
+</resources>

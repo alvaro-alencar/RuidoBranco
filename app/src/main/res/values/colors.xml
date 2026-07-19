@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="night">#07111D</color>
+    <color name="primary">#2979C7</color>
+    <color name="secondary_button">#24445F</color>
+    <color name="stop_button">#A13F50</color>
+    <color name="success">#79D7B5</color>
+    <color name="text_primary">#F4F8FB</color>
+    <color name="text_muted">#A9BED0</color>
+    <color name="text_subtle">#7890A4</color>
+</resources>
